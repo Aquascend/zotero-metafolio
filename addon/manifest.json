@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "MetaFolio for Zotero · 书目拾页",
-  "description": "从 PDF 题名页或专利扉页离线提取题录，核对原文后创建 Zotero 条目。",
-  "version": "1.1.1",
+  "description": "从期刊文章、学位论文和中国专利 PDF 离线提取题录，核对原文后创建 Zotero 条目。",
+  "version": "1.2.0",
   "applications": {
     "zotero": {
       "id": "thesis-cover-metadata@local",

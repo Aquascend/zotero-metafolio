@@ -13,7 +13,7 @@ const cover = [
     "(57)摘要 示例文字。"
 ].join("\n");
 
-function setup({ parentID = null, pages = [cover] } = {}) {
+function setup({ parentID = null, pages = [cover], metadata = {} } = {}) {
     const saved = [];
     const attachment = {
         id: 1, libraryID: 3, parentID, attachmentFilename: "sample.pdf",
@@ -31,7 +31,7 @@ function setup({ parentID = null, pages = [cover] } = {}) {
     const ctx = vm.createContext({
         Zotero: {
             Item, Items: { getAsync: async () => attachment }, DB: { executeTransaction: fn => fn() },
-            PDFWorker: { getRecognizerData: async () => ({ pages: pages.map(page => {
+            PDFWorker: { getRecognizerData: async () => ({ metadata, pages: pages.map(page => {
                 const lines = page.split("\n").map(text => {
                     const word = Array(14).fill(0);
                     word[13] = text;
@@ -42,7 +42,7 @@ function setup({ parentID = null, pages = [cover] } = {}) {
         },
         IOUtils: { exists: async () => true }
     });
-    for (const file of ["parser.js", "patent-parser.js", "bootstrap.js"]) {
+    for (const file of ["parser.js", "patent-parser.js", "article-parser.js", "article-imprint.js", "bootstrap.js"]) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, "../addon", file), "utf8"), ctx);
     }
     vm.runInContext("active = true", ctx);
@@ -58,6 +58,29 @@ function accept(state) {
     state.fields = { ...state.result.fields, creators: state.creators };
     state.action = "save";
 }
+
+test("journal recognition skips one blank PDF leaf and cites the physical page", () => {
+    const { ctx } = setup();
+    const title = "Tracking water in urban gardens";
+    const DOI = "10.1088/example.24";
+    const wrapper = ["Garden Physics", "PAPER", title,
+        "To cite this article: Lee North 2024 Gard. Phys. 8 020123",
+        "View the article online for updates and enhancements.", "IOP Publishing"].join("\n");
+    const header = "Gard. Phys. 8 (2024) 020123\nhttps://doi.org/" + DOI;
+    const result = ctx.recognize(["", wrapper, header], { source: "pdf" });
+    assert.equal(result.itemType, "journalArticle");
+    assert.equal(result.fields.DOI, DOI);
+    assert.match(result.evidence.title, /^第 2 页/);
+    assert.match(result.evidence.DOI, /^第 3 页/);
+    for (const [pages, source] of [[["", wrapper, header], "cache"],
+        [["", "", wrapper, header], "pdf"], [["References", wrapper, header], "pdf"]]) {
+        assert.equal(ctx.recognize(pages, { source }).itemType, null);
+    }
+    const imprint = ctx.recognize(["", "Garden Physics\n" + title + "\nhttps://doi.org/" + DOI],
+        { source: "pdf", metadata: { Title: title, Subject: "Garden Physics, 8 (2024) 20-24. doi:" + DOI } });
+    assert.equal(imprint.itemType, "journalArticle");
+    assert.match(imprint.evidence.title, /与第 2 页/);
+});
 
 test("confirmation files a patent in the original collection with inventor roles", async () => {
     const { review, saved, attachment } = setup();
@@ -123,5 +146,28 @@ test("saving a thesis preserves each reviewed identifier in its supported field 
             }
         }
         assert.equal(fields.extra || "", extra.join("\n"));
+    }
+});
+test("the PDF menu can file a reviewed journal article and preview a parented copy", async () => {
+    const title = "Counting tree rings in old oaks";
+    const metadata = { Title: title, Subject: "Journal of Forest Ecology, 21 (2022) 13-19. doi:10.1234/forests.7" };
+    const pages = [[title, "Mira West", "Journal of Forest Ecology", "DOI: 10.1234/forests.7"].join("\n")];
+    for (const parentID of [null, 42]) {
+        const { review, saved, attachment } = setup({ parentID, metadata, pages });
+        await review(state => {
+            assert.equal(state.result.itemType, "journalArticle");
+            assert.equal(state.editable, parentID === null);
+            assert.ok(state.labels.publicationTitle);
+            accept(state);
+        });
+        if (parentID) assert.equal(saved.length, 0);
+        else {
+            assert.equal(saved[0].itemType, "journalArticle");
+            assert.equal(saved[0].fields.DOI, "10.1234/forests.7");
+            assert.equal(saved[0].fields.publicationTitle, "Journal of Forest Ecology");
+            assert.equal(saved[0].fields.pages, "13-19");
+            assert.deepEqual(saved[0].collections, [18]);
+            assert.equal(attachment.parentID, saved[0].id);
+        }
     }
 });

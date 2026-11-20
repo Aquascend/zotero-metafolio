@@ -7,7 +7,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const { itemType, fields, evidence, warnings } = review.result;
     const creatorKey = itemType === "patent" ? "inventors" : "authors";
     byID("filename").textContent = review.filename;
-    const kind = { patent: "专利", thesis: "学位论文" }[itemType];
+    const kind = { patent: "专利", thesis: "学位论文", journalArticle: "期刊文章" }[itemType];
     const mode = editable ? "" : "只读预览。";
     byID("source").textContent = (kind ? kind + " · " : "") + mode + review.input.notice;
     byID("save").hidden = !editable;

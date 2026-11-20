@@ -1,4 +1,4 @@
-/* global Zotero, Services, Components, IOUtils, ThesisMetadata, PatentMetadata, APP_SHUTDOWN */
+/* global Zotero, Services, Components, IOUtils, ThesisMetadata, PatentMetadata, ArticleMetadata, ArticleImprint, APP_SHUTDOWN */
 "use strict";
 
 let menuID;
@@ -7,6 +7,10 @@ let running = false;
 let active = false;
 
 const itemFields = {
+    journalArticle: {
+        title: "文章题名", authors: "作者", publicationTitle: "期刊名称", date: "日期",
+        volume: "卷", issue: "期", pages: "页码或文章号", DOI: "DOI", language: "语言"
+    },
     thesis: {
         title: "论文题名", authors: "作者", university: "授予单位", thesisType: "学位类型",
         date: "日期", language: "语言", place: "地点", DOI: "DOI", ISBN: "ISBN"
@@ -26,13 +30,26 @@ function canCreate(item) {
     return isPDF(item) && item.isTopLevelItem() && item.isEditable();
 }
 
-function recognize(pages, options) {
+function recognize(pages, options = {}) {
     const patent = PatentMetadata.parsePages(pages, options);
     if (patent) return { ...patent, itemType: "patent" };
     const thesis = ThesisMetadata.parsePages(pages, options);
     if (thesis.fields.title) return { ...thesis, itemType: "thesis" };
+    // Some publisher PDFs start with an image-only leaf. A cache fragment has
+    // no reliable page boundary, so advance only on an actual PDF.
+    const offset = options.source === "pdf" && pages.length > 1 && !pages[0].trim() ? 1 : 0;
+    const articlePages = offset ? pages.slice(offset) : pages;
+    const article = ArticleMetadata.parsePages(articlePages, options, offset + 1);
+    const imprint = ArticleImprint.parse(articlePages, options.metadata, offset + 1);
+    const result = ArticleImprint.combine(article, imprint);
+    if (result) {
+        if (!result.fields.authors?.length && !result.warnings.some(s => s.includes("作者"))) {
+            result.warnings.push("未能完整核实署名，请对照原文填写作者。");
+        }
+        return { ...result, itemType: "journalArticle" };
+    }
     return { itemType: null, fields: {}, evidence: {},
-        warnings: ["未能从这些页面确认学位论文或中国专利。可展开原文检查文字是否完整。"] };
+        warnings: ["未能从这些页面确认期刊文章、学位论文或中国专利。可展开原文检查文字是否完整。"] };
 }
 
 function pagesFromRecognizer(data) {
@@ -55,7 +72,7 @@ async function readFrontMatter(item) {
             const raw = await Zotero.PDFWorker.getRecognizerData(item.id, true);
             const pages = pagesFromRecognizer(raw);
             if (pages.some(page => page.trim())) {
-                return { pages, source: "pdf", notice: `来源为原 PDF 的前 ${pages.length} 页。` };
+                return { pages, metadata: raw.metadata, source: "pdf", notice: `来源为原 PDF 的前 ${pages.length} 页及其文档属性。` };
             }
         }
     }
@@ -137,7 +154,7 @@ async function reviewAttachments(win, items) {
             try {
                 const input = await readFrontMatter(item);
                 if (!active || win.closed) break;
-                const result = recognize(input.pages, { filename, source: input.source });
+                const result = recognize(input.pages, { filename, source: input.source, metadata: input.metadata });
                 const editable = !!result.itemType && canCreate(item);
                 const review = {
                     filename, input, result, editable, labels: itemFields[result.itemType] || {},
@@ -172,6 +189,8 @@ function startup({ id, rootURI }) {
         [["content", "metafolio", "./"]]);
     Services.scriptloader.loadSubScript(rootURI + "parser.js", this);
     Services.scriptloader.loadSubScript(rootURI + "patent-parser.js", this);
+    Services.scriptloader.loadSubScript(rootURI + "article-parser.js", this);
+    Services.scriptloader.loadSubScript(rootURI + "article-imprint.js", this);
     active = true;
     menuID = Zotero.MenuManager.registerMenu({
         menuID: "metafolio-review", pluginID: id, target: "main/library/item",
