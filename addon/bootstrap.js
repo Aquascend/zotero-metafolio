@@ -9,7 +9,7 @@ let active = false;
 const itemFields = {
     thesis: {
         title: "论文题名", authors: "作者", university: "授予单位", thesisType: "学位类型",
-        date: "日期", language: "语言", place: "地点", DOI: "DOI"
+        date: "日期", language: "语言", place: "地点", DOI: "DOI", ISBN: "ISBN"
     },
     patent: {
         title: "专利名称", inventors: "发明人", patentNumber: "专利文献号", applicationNumber: "申请号",
@@ -102,20 +102,21 @@ async function createParent(attachmentID, type, fields) {
 
         const parent = new Zotero.Item(type);
         parent.libraryID = item.libraryID;
+        const extraIdentifiers = [];
         for (const name of Object.keys(itemFields[type])) {
-            if (["authors", "inventors", "DOI"].includes(name)) continue;
-            if (fields[name]?.trim()) parent.setField(name, fields[name].trim());
-        }
-        if (type === "thesis" && fields.DOI?.trim()) {
-            const doi = fields.DOI.trim();
-            const doiID = Zotero.ItemFields.getID("DOI");
-            if (doiID && Zotero.ItemFields.isValidForType(doiID, parent.itemTypeID)) {
-                parent.setField("DOI", doi);
+            if (["authors", "inventors"].includes(name)) continue;
+            const value = fields[name]?.trim();
+            if (!value) continue;
+            if (type === "thesis" && ["DOI", "ISBN"].includes(name)) {
+                const id = Zotero.ItemFields.getID(name);
+                if (!id || !Zotero.ItemFields.isValidForType(id, parent.itemTypeID)) {
+                    extraIdentifiers.push(`${name}: ${value}`);
+                    continue;
+                }
             }
-            else {
-                parent.setField("extra", `DOI: ${doi}`);
-            }
+            parent.setField(name, value);
         }
+        if (extraIdentifiers.length) parent.setField("extra", extraIdentifiers.join("\n"));
         parent.setCreators(fields.creators);
         parent.setCollections(item.getCollections());
         await parent.save();

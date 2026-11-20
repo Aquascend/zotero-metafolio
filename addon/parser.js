@@ -97,6 +97,16 @@ var ThesisMetadata = (() => {
     return true;
   }
 
+  const imprintRegions = new Set((
+    "Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|District of Columbia|Florida|Georgia|" +
+    "Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|Massachusetts|Michigan|" +
+    "Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|" +
+    "North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|South Dakota|" +
+    "Tennessee|Texas|Utah|Vermont|Virginia|Washington|West Virginia|Wisconsin|Wyoming|Alberta|British Columbia|" +
+    "Manitoba|New Brunswick|Newfoundland and Labrador|Northwest Territories|Nova Scotia|Nunavut|Ontario|" +
+    "Prince Edward Island|Quebec|Québec|Saskatchewan|Yukon"
+  ).split("|"));
+
   function parseEnglish(r, lines, pageNumber) {
     const by = lines.findIndex(s => /^(?:submitted |presented |written )?by(?:\s*:|\s*$|\s+[\p{Lu}])/iu.test(s));
     const submission = lines.findIndex(s => /^(?:(?:a|this) )?(?:doctoral |master(?:[’']?s)? )?(?:thesis|dissertation)\s+(?:submitted|presented)\b/i.test(s));
@@ -120,6 +130,22 @@ var ThesisMetadata = (() => {
     for (const line of [...lines.slice(by + 1), ...lines.slice(0, by)]) {
       const school = englishSchool(line);
       if (school) put(r, "university", school, line);
+    }
+
+    // The city belongs to the imprint when it immediately follows the degree
+    // statement and immediately precedes a standalone month and year.
+    if (submission >= 0 && r.fields.university && degreeLine) {
+      const degreeIndex = lines.indexOf(degreeLine);
+      const place = lines[degreeIndex + 1] || "";
+      const dateLine = lines[degreeIndex + 2] || "";
+      const cityRegion = place.match(/^(\p{Lu}[\p{L}\p{M}.'’-]*(?: [\p{L}\p{M}.'’-]+){0,5}), (.+)$/u);
+      if (degreeIndex >= submission && degreeIndex - submission <= 5 &&
+          /\b(?:doctor of philosophy|master of (?:arts|science|engineering|philosophy))\.?$/i.test(degreeLine) &&
+          cityRegion && imprintRegions.has(cityRegion[2]) &&
+          !/\b(?:advisor|adviser|supervisor|department|university|faculty|college|school|campus|address|professor|street|road|avenue|boulevard|suite)\b/i.test(cityRegion[1]) &&
+          new RegExp("^(" + monthPat + "),? " + yearPat + "$", "i").test(dateLine)) {
+        put(r, "place", place, place + " / " + dateLine);
+      }
     }
 
     const defended = lines.findIndex(s => /\b(?:to be defended|defended (?:in|on)|date of (?:defen[cs]e|submission))\b/i.test(s));
@@ -162,7 +188,9 @@ var ThesisMetadata = (() => {
   function parseGerman(r, lines) {
     // German degree-approval sheets place title and author directly before the approval formula.
     const approval = lines.findIndex(s => /^Vollständiger Abdruck der\b/i.test(s));
-    if (approval < 3 || !/genehmigten Dissertation/i.test(lines.slice(approval, approval + 6).join(" "))) return;
+    if (approval < 3) return;
+    const declaration = lines.slice(approval, approval + 6).join(" ").match(/^.+?genehmigten Dissertation\b/i);
+    if (!declaration) return;
     const author = lines[approval - 1];
     if (!westernName(author)) return;
     const headings = /universität|university|^dissertation$|\b(?:school|faculty|department|fakultät)\b/i;
@@ -173,14 +201,20 @@ var ThesisMetadata = (() => {
     if (start < 0 || titleLines.length > 7 || !validTitle(title)) return;
     put(r, "title", title, title);
     put(r, "authors", [author], author);
-    put(r, "thesisType", "Doctoral thesis", "genehmigten Dissertation");
+    const doctorate = declaration[0].match(/\bDoktor(?:in|s)? der (?:Naturwissenschaften\s*\((Dr\.\s*rer\.\s*nat\.)\)|Ingenieurwissenschaften\s*\((Dr\.-Ing\.)\))/i);
+    const degree = doctorate && (doctorate[1] || doctorate[2]);
+    put(r, "thesisType", degree ? `Doctoral thesis (${degree})` : "Doctoral thesis",
+      doctorate ? doctorate[0] : "genehmigten Dissertation");
     for (const line of lines.slice(0, start + 1).reverse()) {
       const school = line.match(/\b((?:Technische )?Universität [\p{L}.’-]+(?: [\p{L}.’-]+)*?)(?=\s+(?:[A-Z]{2,}|School|Fakultät)\b|$)/iu);
       if (school) put(r, "university", school[1], line);
     }
     const approvalText = lines.slice(approval, approval + 22).join(" ");
-    const accepted = approvalText.match(/\bam (\d{1,2})\.(\d{1,2})\.((?:18|19|20)\d{2}) angenommen\b/i);
-    if (accepted) put(r, "date", formatDate(accepted[3], accepted[2], accepted[1]), accepted[0]);
+    const accepted = approvalText.match(/\bam (\d{1,2})\.\s*(\d{1,2})\.\s*((?:18|19|20)\d{2}) angenommen\b/i);
+    // Faculty approval may precede the oral examination and publication by a calendar year.
+    if (accepted && formatDate(accepted[3], accepted[2], accepted[1])) {
+      r.approvalDateNote = r.location + " · " + accepted[0] + " 是院系批准日期。书目日期请核对学校目录。";
+    }
   }
 
   const cnTitleLabel = /^(?:(?:学位)?论文(?:题目|题名|标题)|中文(?:题目|题名|标题)|题目)(?:\s*\(中文\)|\s*\(汉语\))?\s*[:：]?\s*/u;
@@ -254,6 +288,50 @@ var ThesisMetadata = (() => {
     });
   }
 
+  function validISBN(number) {
+    if (/^97[89]\d{10}$/.test(number) && !number.startsWith("9790")) {
+      return [...number].reduce((sum, digit, i) => sum + Number(digit) * (i % 2 ? 3 : 1), 0) % 10 === 0;
+    }
+    if (/^\d{9}[\dX]$/.test(number)) {
+      return [...number].reduce((sum, digit, i) => sum + (digit === "X" ? 10 : Number(digit)) * (10 - i), 0) % 11 === 0;
+    }
+    return false;
+  }
+
+  function thesisISBN(records, allLines, source) {
+    const pages = new Set();
+    for (const record of records.filter(r => !r.repository)) {
+      pages.add(record.pageIndex);
+      // A neighboring copyright page belongs to this thesis only when its
+      // copyright holder matches the byline and it also has an imprint.
+      for (const neighbor of [record.pageIndex - 1, record.pageIndex + 1]) {
+        const lines = allLines[neighbor];
+        if (!lines || lines.length > 35 || !lines.some(s => /^(?:production|printed by|published by|printing)\b/i.test(s))) continue;
+        const credit = lines.find(s => /^(?:©\s*(?:copyright\s*)?|copyright\s+)/i.test(s));
+        if (!credit || !record.fields.authors?.length) continue;
+        const copyrightYear = credit.match(/\b(?:18|19|20)\d{2}\b/);
+        if (copyrightYear && record.fields.date && !record.fields.date.startsWith(copyrightYear[0])) continue;
+        const holder = credit.replace(/^(?:©\s*)?(?:copyright\s*)?/i, "").split(/[,;]|\s+\d{4}\b/)[0].trim();
+        if (/\s/u.test(holder) && record.fields.authors.some(name => authorsAgree([name], [holder]))) pages.add(neighbor);
+      }
+    }
+    const found = new Map();
+    for (const index of pages) {
+      const lines = allLines[index].slice(0, 70);
+      for (const [i, line] of lines.entries()) {
+        if (/^(?:(?:references|bibliography|works cited|publications|selected publications|recommended reading|other books|contents|table of contents|abstract|chapter\s+\d+)\b|参考文献|摘要|目录)/iu.test(line)) break;
+        const label = line.match(/^ISBN\b(?:\s*-\s*(10|13))?\s*:?\s*(.*)$/i);
+        if (!label) continue;
+        const value = label[2] || lines[i + 1] || "";
+        const number = value.replace(/[\s\u2010-\u2014-]/g, "").toUpperCase();
+        if ((label[1] && Number(label[1]) !== number.length) || !validISBN(number)) return;
+        const location = source === "cache" ? "索引片段 " + (index + 1) : "第 " + (index + 1) + " 页";
+        found.set(number, location + " · " + (label[2] ? line : line + " " + value));
+      }
+    }
+    if (found.size === 1) return found.entries().next().value;
+  }
+
   function parsePages(pages, options = {}) {
     const warnings = [];
     const records = [];
@@ -263,7 +341,7 @@ var ThesisMetadata = (() => {
       allLines.push(lines);
       if (!lines.length) continue;
       const location = (options.source === "cache" ? "索引片段 " : "第 ") + (index + 1) + (options.source === "cache" ? "" : " 页");
-      const r = { fields: {}, evidence: {}, location };
+      const r = { fields: {}, evidence: {}, location, pageIndex: index };
       r.repository = parseRepository(r, lines);
       if (!r.repository) {
         // In an unpaginated index the running header before the abstract is still front matter.
@@ -294,7 +372,7 @@ var ThesisMetadata = (() => {
       return header && titleKey(line.slice(header[0].length)) === titleKey(r.fields.title);
     })));
     const selected = verified.find(r => !r.repository) || verified[0];
-    const fields = { title: "", authors: [], authorMode: "western", university: "", date: "", thesisType: "", language: "", DOI: "" };
+    const fields = { title: "", authors: [], authorMode: "western", university: "", date: "", thesisType: "", language: "", place: "", DOI: "", ISBN: "" };
     const evidence = {};
     if (selected) {
       const sameTitle = verified.filter(r => {
@@ -318,6 +396,8 @@ var ThesisMetadata = (() => {
           }
         }
       }
+      const isbn = thesisISBN([selected, ...sameTitle], allLines, options.source);
+      if (isbn) [fields.ISBN, evidence.ISBN] = isbn;
       // Some Chinese title forms leave the institution and degree to running headers.
       if (fields.language === "zh-CN" && (!fields.university || !fields.thesisType)) {
         for (const [i, lines] of allLines.entries()) {
@@ -332,6 +412,7 @@ var ThesisMetadata = (() => {
         }
       }
       if (fields.authors.length && fields.authors.every(s => han.test(s))) fields.authorMode = "single";
+      if (!fields.date && selected.approvalDateNote) warnings.push(selected.approvalDateNote);
       if (fields.language) warnings.push("语种按题名页文字推断，请核对正文。");
     }
     if (!allLines.some(lines => lines.length)) warnings.push("没有可读取的文字，请先对扫描件做 OCR，或手工填写。");

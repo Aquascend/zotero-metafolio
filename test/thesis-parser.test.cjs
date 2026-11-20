@@ -123,7 +123,7 @@ test("学位声明可直接包含授予单位，署名可包含括号内的名�
   assert.equal(result.fields.thesisType, "PhD thesis");
 });
 
-test("德国学位审批页区分批准日期与提交日期，保留外文题名及德语学校名", () => {
+test("德国学位审批页保留学位原文，批准日和提交日都不自动用作书目日期", () => {
   const page = [
     "Technische Universität Beispielstadt", "A survey of urban gardens", "Mira Sommer",
     "Vollständiger Abdruck der von der Fakultät zur Erlangung des akademischen Grades einer",
@@ -134,8 +134,25 @@ test("德国学位审批页区分批准日期与提交日期，保留外文题�
   assert.equal(result.fields.title, "A survey of urban gardens");
   assert.deepEqual(result.fields.authors, ["Mira Sommer"]);
   assert.equal(result.fields.university, "Technische Universität Beispielstadt");
-  assert.equal(result.fields.date, "2024-04-22");
+  assert.equal(result.fields.date, "");
+  assert.ok(result.warnings.some(s => s.includes("第 1 页") && s.includes("22.04.2024 angenommen")));
+  assert.equal(result.fields.thesisType, "Doctoral thesis");
   assert.equal(result.fields.language, "");
+  for (const form of ["Doktors", "Doktorin"]) {
+    const qualified = page.replace("Doktorin der Naturwissenschaften", form + " der Naturwissenschaften\n(Dr. rer. nat.)");
+    const cached = parsePages([qualified], { source: "cache" });
+    assert.equal(cached.fields.thesisType, "Doctoral thesis (Dr. rer. nat.)");
+    assert.ok(cached.evidence.thesisType.includes(form + " der Naturwissenschaften (Dr. rer. nat.)"));
+    assert.ok(cached.warnings.some(s => s.includes("索引片段 1") && s.includes("22.04.2024")));
+  }
+  const supervisor = page.replace("Prof. Dr. Muster", "Dr. rer. nat. Mira Muster");
+  assert.equal(parsePages([supervisor]).fields.thesisType, "Doctoral thesis");
+  const engineering = page.replace("Doktorin der Naturwissenschaften", "Doktors der Ingenieurwissenschaften (Dr.-Ing.)")
+    .replace("22.04.2024", "22. 04. 2024");
+  const engineer = parsePages([engineering]);
+  assert.equal(engineer.fields.thesisType, "Doctoral thesis (Dr.-Ing.)");
+  assert.equal(engineer.fields.date, "");
+  assert.ok(engineer.warnings.some(s => s.includes("22. 04. 2024 angenommen")));
 });
 
 test("无年份或学校时留空，导师身份不作为作者", () => {
@@ -145,4 +162,26 @@ test("无年份或学校时留空，导师身份不作为作者", () => {
   assert.deepEqual(result.fields.authors, []);
   assert.equal(result.fields.date, "");
   assert.equal(result.fields.university, "");
+});
+
+test("ISBN comes from the thesis title page or the author's adjacent copyright page", () => {
+  const imprint = "© Copyright R West, Oak 2020\nProduction: Example Press\nISBN 978 0 306 40615 7";
+  const { fields, evidence } = parsePages([imprint, titlePage]);
+  assert.equal(fields.ISBN, "9780306406157");
+  assert.match(evidence.ISBN, /第 1 页.*ISBN 978 0 306 40615 7/);
+  const legacy = parsePages([titlePage + "\nISBN-10:\n0-8044-2957-X"], { source: "cache" });
+  assert.equal(legacy.fields.ISBN, "080442957X");
+  assert.match(legacy.evidence.ISBN, /索引片段 1.*ISBN-10/);
+  for (const pages of [
+    [imprint.replace("R West", "E West"), titlePage],
+    [imprint.replace("2020", "2010"), titlePage],
+    [imprint, "", titlePage],
+    [titlePage, "References\nISBN 9780306406157"],
+    [titlePage + "\nBibliography\nISBN 9780306406157"],
+    [titlePage + "\nISBN-10: 9780306406157"],
+    [titlePage + "\nISBN 9780306406158"],
+    [titlePage + "\nISBN 9790060115615"], // ISMN prefix for sheet music
+    [titlePage + "\nISBN 080442957X", imprint],
+    [imprint],
+  ]) assert.equal(parsePages(pages).fields.ISBN, "");
 });

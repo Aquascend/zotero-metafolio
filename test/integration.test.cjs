@@ -106,3 +106,22 @@ test("initials preserve a multipart family name in the review and creator data",
     assert.equal(creator.lastName, "Van der Meer");
     assert.equal(creator.creatorType, "author");
 });
+
+test("saving a thesis preserves each reviewed identifier in its supported field or Extra", async () => {
+    for (const supported of [[], ["DOI"], ["ISBN"], ["DOI", "ISBN"]]) {
+        const { ctx, saved } = setup();
+        ctx.Zotero.ItemFields = { getID: name => name, isValidForType: name => supported.includes(name) };
+        const identifiers = { DOI: "10.1234/gardens", ISBN: "9780306406157" };
+        await ctx.createParent(1, "thesis", { title: "Urban gardens", creators: [], ...identifiers });
+        const fields = saved[0].fields;
+        const extra = [];
+        for (const [key, value] of Object.entries(identifiers)) {
+            if (supported.includes(key)) assert.equal(fields[key], value);
+            else {
+                assert.equal(fields[key], undefined);
+                extra.push(`${key}: ${value}`);
+            }
+        }
+        assert.equal(fields.extra || "", extra.join("\n"));
+    }
+});
