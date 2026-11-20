@@ -14,6 +14,14 @@
 
 插件优先使用 Zotero 自带的 PDF 阅读组件。原文件不可用时会尝试现有的本机全文索引，并在核对窗口标明来源。纯图片扫描件需要先做 OCR。解析不依赖外部数据库、AI 服务或 API 密钥。
 
+## 为什么封面信息齐全，Zotero 有时仍认不出来？
+
+Zotero 的「检索元数据」会读取 PDF 前几页的文字，发送给 Zotero 的在线识别服务。服务结合文本特征、Crossref 书目记录和标识符查找匹配。以 Zotero 10.0.8 为例，客户端可用服务返回的 arXiv ID、DOI 或 ISBN 继续检索。如果这些途径未生成条目而服务返回了题名，客户端通常按期刊文章保存，也专门处理了书籍章节。这段回退逻辑没有为学位论文填写授予单位，也没有按中国专利扉页的编号区分申请与授权。[Zotero 官方说明](https://www.zotero.org/support/retrieve_pdf_metadata#how_it_works) · [Zotero 10.0.8 的 PDF 识别代码](https://github.com/zotero/zotero/blob/10.0.8/chrome/content/zotero/xpcom/recognizeDocument.js#L402-L567)
+
+我们用同版 Zotero 的 PDF 阅读组件复查了四篇学位论文。有两篇英文论文的 PDF 属性里题名和作者都是空的，一篇中文论文的作者属性写的是「CNKI」。这三份文件的前五页都能读出论文信息，但未见 DOI 或 ISBN 标记。另一篇英文论文第一页就有 DOI，第三页还有 ISBN，完整署名和答辩日则在第四页。四份文件处理前都是独立附件。由于缺少当时逐件检索的服务响应，具体哪一步没有匹配成功仍无法确定。MetaFolio 可以直接按题名页的署名和学位声明还原字段，供读者核对。
+
+三份中国专利的扉页也都有可读文字。最能说明问题的一份发明授权文本在同一页同时列出本次授权公告号、先前的申请公布号和对比专利。MetaFolio 依据栏目选取与本件对应的号码和日期。两份实用新型和一份发明授权的测试结果均与各自扉页一致。这些样本说明了插件适用的场景；其他版式的识别效果仍需分别验证。[专利解析测试](test/patent-parser.test.cjs) · [学位论文解析测试](test/thesis-parser.test.cjs)
+
 ## 开发
 
 在项目目录运行 `node --test` 执行测试，运行 `python build.py` 生成 XPI。两者均使用标准库。测试用例是虚构的封面文字，可以随项目公开。
