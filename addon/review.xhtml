@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh-CN">
+<head>
+    <meta charset="utf-8"/>
+    <title>书目拾页 · 核对题录</title>
+    <link rel="stylesheet" href="chrome://metafolio/content/review.css"/>
+    <script defer="defer" src="chrome://metafolio/content/review.js"></script>
+</head>
+<body>
+    <header>
+        <h1 id="filename"></h1>
+        <p id="source"></p>
+    </header>
+    <main>
+        <p id="warnings" hidden="hidden"></p>
+        <form id="fields" autocomplete="off"></form>
+        <details id="evidence-section">
+            <summary>查看字段依据</summary>
+            <dl id="evidence"></dl>
+        </details>
+        <details>
+            <summary>查看提取的原文</summary>
+            <div id="pages"></div>
+        </details>
+    </main>
+    <footer>
+        <span id="position"></span>
+        <button type="button" id="stop">取消</button>
+        <button type="button" id="skip" hidden="hidden">下一份</button>
+        <button type="submit" id="save" form="fields">创建条目</button>
+    </footer>
+</body>
+</html>
